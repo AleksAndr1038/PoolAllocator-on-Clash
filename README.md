@@ -45,7 +45,7 @@ This repository contains pool allocator implementation on Clash
 import PoolAllocator
 import Clash.Prelude
 
-topEntity :: (Vec 4 Bool, Vec 4 Block, Maybe (Index 4), Maybe (Index 4), Maybe (Index 4))
+topEntity :: ([Index 4], Vec 4 Block, Maybe (Index 4), Maybe (Index 4), Maybe (Index 4))
 topEntity = (freeList a4, pool a4, i1, i2, i3) where
     a0 = createPool 16
 
