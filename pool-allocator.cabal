@@ -29,3 +29,17 @@ library
         DeriveGeneric,
         TypeApplications,
         TypeOperators
+
+test-suite allocators-test
+    import:           warnings
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   src/test/
+    main-is:          PoolAllocatorTests.hs
+    build-depends:
+        base ^>=4.18.3.0,
+        pool-allocator, 
+        hspec,
+        clash-prelude

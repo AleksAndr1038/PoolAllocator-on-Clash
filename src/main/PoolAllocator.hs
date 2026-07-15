@@ -1,8 +1,12 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+
 module PoolAllocator where
 
 import Clash.Prelude
 
-data Block = Free | Allocated deriving Show
+data Block = Free | Allocated deriving (Show, Eq)
 
 data PoolAllocator (numBlocks :: Nat) = PoolAllocator {
     blockSize :: Int,
