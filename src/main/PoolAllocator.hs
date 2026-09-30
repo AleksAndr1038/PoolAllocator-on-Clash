@@ -1,47 +1,48 @@
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE KindSignatures #-}
 
 module PoolAllocator where
 
 import Clash.Prelude
+import Control.Monad.State
 
-data Block = Free | Allocated deriving (Show, Eq)
+type BlockSize = BitVector 512
 
-data PoolAllocator (numBlocks :: Nat) = PoolAllocator {
-    blockSize :: Int,
-    freeList :: [Index numBlocks],
-    pool :: Vec numBlocks Block
+data AllocatorCmd n a = Nop | Alloc a | Free (Index n) | ReadBlockData (Index n)
+    deriving (Eq, Show)
+
+data AllocatorRes n a = Waiting | AllocSuccess (Index n) | NoFreeBlocks
+    deriving (Eq, Show)
+
+data AllocatorState n = AllocatorState {
+    freeBlockList :: Vec n (Index n),
+    freeCount :: Index (n + 1)
+} deriving (Eq, Show)
+
+initAllocatorState :: (KnownNat n) => AllocatorState n
+initAllocatorState = AllocatorState {
+    freeBlockList = indicesI,
+    freeCount = maxBound
 }
 
-createPool :: KnownNat numBlocks => Int -> PoolAllocator numBlocks
-createPool blockSize' = PoolAllocator {
-    blockSize = blockSize',
-    freeList = [minBound..maxBound],
-    pool = repeat Free
-}
+allocatorStep :: (KnownNat n, NFDataX a) => AllocatorCmd n a -> State (AllocatorState n) (Maybe (Index n, a), Maybe (Index n), AllocatorRes n a)
+allocatorStep cmd = case cmd of
+    Nop -> return (Nothing, Nothing, Waiting)
 
-allocate :: KnownNat numBlocks => PoolAllocator  numBlocks -> (PoolAllocator numBlocks, Maybe (Index numBlocks))
-allocate alloc = case freeList alloc of
-    [] -> (alloc, Nothing)
-    idx : free -> (alloc {
-        freeList = free,
-        pool = replace idx Allocated (pool alloc)}, Just idx)
+    Alloc usrData -> do
+        st <- get
+        if freeCount st == 0 then 
+            return (Nothing, Nothing, NoFreeBlocks)
+        else do
+            let idx = freeBlockList st !! (freeCount st - 1)
+            modify (\s -> s { freeCount = freeCount s - 1})
+            return (Just (idx, usrData), Nothing, AllocSuccess idx)
 
-deallocate :: KnownNat numBlocks => PoolAllocator numBlocks -> Index numBlocks -> PoolAllocator numBlocks
-deallocate dealloc idx = dealloc {
-    freeList = idx : freeList dealloc,
-    pool = replace idx Free (pool dealloc)}
+    Free idx -> do
+        st <- get
+        let updateFreeList = replace (freeCount st) idx (freeBlockList st)
+        put st { freeBlockList = updateFreeList, freeCount = freeCount st + 1}
+        return (Nothing, Nothing, Waiting)
 
-topEntity :: ([Index 4], Vec 4 Block, Maybe (Index 4), Maybe (Index 4), Maybe (Index 4))
-topEntity = (freeList a4, pool a4, i1, i2, i3) where
-    a0 = createPool 16
-
-    (a1, i1) = allocate a0
-    (a2, i2) = allocate a1
-
-    a3 = case i1 of
-        Nothing -> a2
-        Just idx -> deallocate a2 idx
-
-    (a4, i3) = allocate a3
+    ReadBlockData idx -> do
+        return (Nothing, Just idx, Waiting)
