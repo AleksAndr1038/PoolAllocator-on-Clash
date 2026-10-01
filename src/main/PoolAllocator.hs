@@ -25,7 +25,12 @@ initAllocatorState = AllocatorState {
     freeCount = maxBound
 }
 
-allocatorStep :: (KnownNat n, NFDataX a) => AllocatorCmd n a -> State (AllocatorState n) (Maybe (Index n, a), Maybe (Index n), AllocatorRes n a)
+allocatorStep
+    :: (KnownNat n, NFDataX a)
+    => AllocatorCmd n a
+    -> State (AllocatorState n)
+    (Maybe (Index n, a),
+    Maybe (Index n), AllocatorRes n a)
 allocatorStep cmd = case cmd of
     Nop -> return (Nothing, Nothing, Waiting)
 
