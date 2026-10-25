@@ -97,7 +97,6 @@ poolAllocator cmd = (allocatorRes, blockData)
 type Connection (portsNumber :: Nat) = Maybe (Port portsNumber)
 type AddressBitSize = 4
 type AddressNumber = Unsigned AddressBitSize
--- type CellsNumber = 2 ^ AddressBitSize
 
 data IdOfPort (portsNumber :: Nat) = Id (Index portsNumber) | Primary
   deriving (Generic, Show, Eq, NFDataX, ShowX)
@@ -138,8 +137,6 @@ exampleNodeB = Node
     , _nodeType = 0xBB
     }
 
--- Four-block pool of nodes: allocate two nodes, read both back, free both.
--- The sequence ends in the initial state, so it repeats every 16 cycles.
 nodeProgram :: Vec 16 (AllocatorCmd 4 (Node ExamplePorts ExampleAgent))
 nodeProgram =
        Alloc exampleNodeA     -- block 3
@@ -148,14 +145,12 @@ nodeProgram =
     :> Nop                    -- data output: A
     :> ReadBlockData 2        -- read node B
     :> Nop                    -- data output: B
-    :> Free 2                 -- release B
-    :> Free 3                 -- release A
+    :> Free 2                 -- free B
+    :> Free 3                 -- free A
     :> Nop :> Nop :> Nop :> Nop
     :> Nop :> Nop :> Nop :> Nop
     :> Nil
 
--- Synthesizable example: a counter walks through 'nodeProgram'. The two
--- outputs are the allocator response and the node read from the block RAM.
 topEntity
     :: Clock System
     -> Reset System
