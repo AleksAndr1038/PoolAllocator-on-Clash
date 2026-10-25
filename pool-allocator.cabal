@@ -44,5 +44,6 @@ test-suite allocators-test
         base ^>=4.18.3.0,
         pool-allocator, 
         hspec,
+        QuickCheck,
         clash-prelude,
         mtl >= 2.3,
