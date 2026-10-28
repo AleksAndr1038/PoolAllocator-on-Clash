@@ -1,47 +1,93 @@
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE KindSignatures #-}
+
 
 module PoolAllocator where
 
 import Clash.Prelude
+import Control.Monad.State
+import Data.Maybe (fromMaybe)
 
-data Block = Free | Allocated deriving (Show, Eq)
+data AllocatorCmd n a 
+    = Nop
+    | Alloc a
+    | Free (Index n)
+    | ReadBlockData (Index n)
+    deriving (Eq, Show, Generic, NFDataX)
 
-data PoolAllocator (numBlocks :: Nat) = PoolAllocator {
-    blockSize :: Int,
-    freeList :: [Index numBlocks],
-    pool :: Vec numBlocks Block
+data AllocatorRes n a 
+    = Waiting
+    | AllocSuccess (Index n)
+    | NoFreeBlocks
+    | InvalidFree
+    deriving (Eq, Show, Generic, NFDataX)
+
+data AllocatorState n = AllocatorState {
+    freeBlockList :: Vec n (Index n),
+    freeCount :: Index (n + 1)
+} deriving (Eq, Show, Generic, NFDataX)
+
+initAllocatorState :: (KnownNat n) => AllocatorState n
+initAllocatorState = AllocatorState {
+    freeBlockList = indicesI,
+    freeCount = maxBound
 }
 
-createPool :: KnownNat numBlocks => Int -> PoolAllocator numBlocks
-createPool blockSize' = PoolAllocator {
-    blockSize = blockSize',
-    freeList = [minBound..maxBound],
-    pool = repeat Free
-}
+allocatorStep
+    :: forall n a.
+       (KnownNat n, NFDataX a)
+    => AllocatorCmd n a
+    -> State (AllocatorState n)
+    (Maybe (Index n, a),
+    Maybe (Index n), AllocatorRes n a)
+allocatorStep cmd = case cmd of
+    Nop -> return (Nothing, Nothing, Waiting)
 
-allocate :: KnownNat numBlocks => PoolAllocator  numBlocks -> (PoolAllocator numBlocks, Maybe (Index numBlocks))
-allocate alloc = case freeList alloc of
-    [] -> (alloc, Nothing)
-    idx : free -> (alloc {
-        freeList = free,
-        pool = replace idx Allocated (pool alloc)}, Just idx)
+    Alloc usrData -> do
+        st <- get
+        if freeCount st == 0 then 
+            return (Nothing, Nothing, NoFreeBlocks)
+        else do
+            let idx = freeBlockList st !! (freeCount st - 1)
+            modify (\s -> s { freeCount = freeCount s - 1})
+            return (Just (idx, usrData), Nothing, AllocSuccess idx)
 
-deallocate :: KnownNat numBlocks => PoolAllocator numBlocks -> Index numBlocks -> PoolAllocator numBlocks
-deallocate dealloc idx = dealloc {
-    freeList = idx : freeList dealloc,
-    pool = replace idx Free (pool dealloc)}
+    Free idx -> do
+        st <- get
 
-topEntity :: ([Index 4], Vec 4 Block, Maybe (Index 4), Maybe (Index 4), Maybe (Index 4))
-topEntity = (freeList a4, pool a4, i1, i2, i3) where
-    a0 = createPool 16
+        let isFreeAt pos =
+                fromIntegral pos < freeCount st
+                && (freeBlockList st !! pos) == idx
+            alreadyFree = foldr (\pos rest -> isFreeAt pos || rest) False
+                                (indicesI :: Vec n (Index n))
+        if alreadyFree
+            then return (Nothing, Nothing, InvalidFree)
+            else do
+                let updateFreeList = replace (freeCount st) idx (freeBlockList st)
+                put st { freeBlockList = updateFreeList, freeCount = freeCount st + 1}
+                return (Nothing, Nothing, Waiting)
 
-    (a1, i1) = allocate a0
-    (a2, i2) = allocate a1
+    ReadBlockData idx -> do
+        return (Nothing, Just idx, Waiting)
 
-    a3 = case i1 of
-        Nothing -> a2
-        Just idx -> deallocate a2 idx
 
-    (a4, i3) = allocate a3
+poolAllocator
+    :: forall dom n a.
+       (HiddenClockResetEnable dom, KnownNat n, NFDataX a)
+    => Signal dom (AllocatorCmd n a)
+    -> (Signal dom (AllocatorRes n a), Signal dom a)
+poolAllocator cmd = (allocatorRes, blockData)
+  where
+    (writePort, readPort, allocatorRes) =
+        unbundle (mealy step initAllocatorState cmd)
+
+    step st c = case runState (allocatorStep c) st of
+        (answer, st') -> (st', answer)
+
+    blockData = blockRam
+        (repeat (deepErrorX "poolAllocator: block was never written") :: Vec n a)
+        (fmap (fromMaybe 0) readPort)
+        writePort
