@@ -11,14 +11,14 @@ import Clash.Prelude
 import Control.Monad.State
 import Data.Maybe (fromMaybe)
 
-data AllocatorCmd n a 
+data AllocatorCmd n a
     = Nop
     | Alloc a
     | Free (Index n)
     | ReadBlockData (Index n)
     deriving (Eq, Show, Generic, NFDataX)
 
-data AllocatorRes n a 
+data AllocatorRes n a
     = Waiting
     | AllocSuccess (Index n)
     | NoFreeBlocks
@@ -73,6 +73,50 @@ allocatorStep cmd = case cmd of
     ReadBlockData idx -> do
         return (Nothing, Just idx, Waiting)
 
+-- | A clocked pool allocator managing @n fixed-size blocks of payload type
+-- @a, backed by a block RAM
+--
+-- One 'AllocatorCmd' is consumed per clock cycle. The circuit returns a pair:
+--
+-- ( Signal dom (AllocatorRes n a)  -- response to the command in this cycle
+-- , Signal dom a                   -- block RAM data
+-- )
+--
+-- Command behaviour:
+--
+-- * 'Nop' — no state change; answers 'Waiting'
+--
+-- * 'Alloc' @x — pops the top block from the free list, writes @x into that
+--   block and answers 'AllocSuccess' with the block index. If the pool is
+--   empty it answers 'NoFreeBlocks' and writes nothing
+--
+-- * 'Free' @i — pushes block @i back onto the free list and answers
+--   'Waiting'. Freeing a block that is already free answers 'InvalidFree' and
+--   leaves the state unchanged, so the free list never contains duplicates
+--
+-- * 'ReadBlockData' @i — presents block @i on the block RAM read port and
+--   answers 'Waiting'. The data appears on the second output one clock cycle
+--   later (synchronous read)
+--
+-- Timing and control:
+--
+-- * The 'AllocatorRes' is combinational with respect to the command: the
+--   response to a command is visible in the same cycle
+--
+-- * A successful 'Alloc' drives the block RAM write port in that same cycle;
+--   no extra write command or handshake is needed
+--
+-- * The hidden reset returns the allocator state to 'initAllocatorState', i.e
+--   all @n blocks become free. The block RAM contents are not reset
+--
+-- * Registers and the block RAM are gated by the hidden enable line
+--
+-- * The block RAM is initialised with 'deepErrorX', so reading a block that has
+--   never been written yields an undefined value. Freeing a block does /not/
+--   clear its contents, so reading a freed block returns its last written
+--   value
+--
+-- The state machine is implemented with 'mealy' over 'allocatorStep'
 
 poolAllocator
     :: forall dom n a.
